@@ -1,0 +1,149 @@
+#define BLYNK_TEMPLATE_ID "TMPL6u1qPqP3T"
+#define BLYNK_TEMPLATE_NAME "Temperature"
+#define BLYNK_AUTH_TOKEN "TS_GeqDqwmX_MCQj_AKCj_NNDAukeq7W"
+
+// WiFi credentials.
+#define WIFI_SSID             "S2"
+#define WIFI_PASS             "012345677"
+
+#define BLYNK_PRINT Serial 
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_Sensor.h> 
+#include <Adafruit_BMP280.h> 
+#include <BlynkSimpleEsp32.h> 
+#include <DHT.h> 
+
+// DHT sensor 
+#define DHT_BLYNK_VPIN_TEMPERATURE V0 // Virtual pin on Blynk 
+#define DHT_BLYNK_VPIN_HUMIDITY V1 // Virtual pin on Blynk
+
+#define DHTPIN 25
+#define DHTTYPE DHT21 
+DHT dht(DHTPIN, DHTTYPE);
+
+// BMP sensor 
+#define BMP_BLYNK_VPIN_PRESSURE V4 // Virtual pin on Blynk 
+
+#define BMP_SCK  (18)
+#define BMP_MISO (19)
+#define BMP_MOSI (23)
+#define BMP_CS   (5)
+Adafruit_BMP280 bmp(BMP_CS, BMP_MOSI, BMP_MISO,  BMP_SCK);
+
+BlynkTimer timer; 
+
+// DHT variables
+int   DHT_ENABLED = 0;
+float DHT_HUMIDITY = 0.0;
+float DHT_HUMIDITY_IGNORED_DELTA = 0.01;
+float DHT_TEMPERATURE = 0.0;
+float DHT_TEMPERATURE_IGNORED_DELTA = 0.01;
+
+// BMP variables
+int   BMP_ENABLED = 0;
+float BMP_PRESSURE = 0.0;
+float BMP_PRESSURE_IGNORED_DELTA = 0.01;
+float BMP_ALTITUDE_IGNORED_DELTA = 0.01;
+
+int RUN = 0;
+
+// DHT setup
+void setupDht() {
+  Serial.println("DHT startup!");
+  dht.begin();
+  DHT_ENABLED = 1;
+}
+
+// BMP setup
+void setupBMP() {
+  Wire.begin();
+  unsigned status;
+  status = bmp.begin(0x76);
+  if (!status) {
+    Serial.println(F("Could not find a valid BMP280 sensor, check wiring or "
+                      "try a different address!"));
+  } else {
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     
+                    Adafruit_BMP280::SAMPLING_X2,     
+                    Adafruit_BMP280::SAMPLING_X16,    
+                    Adafruit_BMP280::FILTER_X16,      
+                    Adafruit_BMP280::STANDBY_MS_500); 
+    Serial.println(F("Valid BMP280 sensor"));
+  }
+}
+
+// Sending data from DHT sensor to Blynk
+void sendDhtData() {
+  Serial.println("Sending DHT data");
+  Blynk.virtualWrite(DHT_BLYNK_VPIN_TEMPERATURE, DHT_TEMPERATURE);
+  Blynk.virtualWrite(DHT_BLYNK_VPIN_HUMIDITY, DHT_HUMIDITY);
+}
+
+// Sending data from BMP sensor to Blynk
+void sendBMPData() {
+  Serial.println("Sending BMP data");
+  Blynk.virtualWrite(BMP_BLYNK_VPIN_PRESSURE, BMP_PRESSURE);
+}
+
+void readAndSendDhtData() {
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+  // check if returns are valid, if they are NaN (not a number) then something went wrong!
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Failed to read from DHT");
+  } else {
+    float humidityDelta = abs(humidity - DHT_HUMIDITY) - DHT_HUMIDITY_IGNORED_DELTA;
+    float temperatureDelta = abs(temperature - DHT_TEMPERATURE) - DHT_TEMPERATURE_IGNORED_DELTA; 
+    if (humidityDelta > 0 || temperatureDelta > 0) {
+      DHT_HUMIDITY = humidity;
+      DHT_TEMPERATURE = temperature;
+      Serial.printf("Humidity: %f%%. Temperature: %f*C.\n", humidity, temperature);
+      sendDhtData();
+    }
+  }
+}
+
+// Reading BMP data
+void readAndSendBMPData() {
+  float pressure = bmp.readPressure() / 100.0F;
+  Serial.printf("Pressure = %fhPa;", pressure);
+
+  float pressureDelta = abs(pressure - BMP_PRESSURE) - BMP_PRESSURE_IGNORED_DELTA;
+
+  if (pressureDelta > 0) {
+    BMP_PRESSURE = pressure;
+    Serial.printf("Pressure = %fhPa;", pressure);
+    sendBMPData();
+  }
+}
+
+void readAndSendSensorsData() { 
+  readAndSendBMPData();
+  readAndSendDhtData();
+  Serial.println("Sending data from sensors");
+}
+
+void setup() {
+  Serial.begin(115200);
+  Blynk.begin(BLYNK_AUTH_TOKEN, WIFI_SSID, WIFI_PASS);
+
+  // Check Blynk connection
+  while (Blynk.connect() == false) {
+    Serial.print(".");
+    delay(1000);
+  }
+  Serial.println("Blynk connected!");
+
+  setupDht();
+  setupBMP();
+  // Set up timer to run every 5 sec
+  timer.setInterval(5000L, readAndSendSensorsData);
+}
+
+void loop() {
+  Blynk.run();  
+  timer.run();
+}
